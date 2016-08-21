@@ -4,6 +4,7 @@ import (
 	"sort"
 
 	mapset "github.com/deckarep/golang-set"
+	//	"github.com/golang/glog"
 )
 
 func makeSet(ss []string) mapset.Set {
@@ -11,6 +12,7 @@ func makeSet(ss []string) mapset.Set {
 	for _, s := range ss {
 		set.Add(s)
 	}
+	//	glog.Infoln("makeSet :", set)
 	return set
 }
 
@@ -22,5 +24,6 @@ func StringSetIntersection(a, b []string) []string {
 		d = append(d, s.(string))
 	}
 	sort.Strings(d)
+	//	glog.Infoln("StringSetIntersection :", d)
 	return d
 }

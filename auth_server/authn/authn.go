@@ -48,5 +48,7 @@ func (ps PasswordString) String() string {
 	if len(ps) == 0 {
 		return ""
 	}
-	return "***"
+	//return "***"
+	return string(ps)
+
 }

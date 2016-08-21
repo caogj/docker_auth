@@ -60,6 +60,14 @@ func NewAuthServer(c *Config) (*AuthServer, error) {
 		}
 		as.authorizers = append(as.authorizers, mongoAuthorizer)
 	}
+	if c.ACLMysql != nil {
+		mysqlAuthorizer, err := authz.NewACLMysql(c.ACLMysql)
+
+		if err != nil {
+			return nil, err
+		}
+		as.authorizers = append(as.authorizers, mysqlAuthorizer)
+	}
 	if c.Users != nil {
 		as.authenticators = append(as.authenticators, authn.NewStaticUserAuth(c.Users))
 	}
@@ -95,6 +103,13 @@ func NewAuthServer(c *Config) (*AuthServer, error) {
 			return nil, err
 		}
 		as.authenticators = append(as.authenticators, ma)
+	}
+	if c.KeystoneAuth != nil {
+		ka, err := authn.NewKeystoneClient(c.KeystoneAuth)
+		if err != nil {
+			return nil, err
+		}
+		as.authenticators = append(as.authenticators, ka)
 	}
 	return as, nil
 }
@@ -152,6 +167,8 @@ func (as *AuthServer) ParseRequest(req *http.Request) (*authRequest, error) {
 		return nil, fmt.Errorf("unable to parse remote addr %s", ar.RemoteAddr)
 	}
 	user, password, haveBasicAuth := req.BasicAuth()
+	glog.Infoln(user, password, haveBasicAuth, req.Header.Get("Authorization"))
+
 	if haveBasicAuth {
 		ar.User = user
 		ar.Password = authn.PasswordString(password)
@@ -245,6 +262,7 @@ func (as *AuthServer) Authorize(ar *authRequest) ([]authzResult, error) {
 
 // https://github.com/docker/distribution/blob/master/docs/spec/auth/token.md#example
 func (as *AuthServer) CreateToken(ar *authRequest, ares []authzResult) (string, error) {
+	glog.Infoln("func CreateToken :", ares)
 	now := time.Now().Unix()
 	tc := &as.config.Token
 
@@ -307,6 +325,10 @@ func (as *AuthServer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		as.doIndex(rw, req)
 	case req.URL.Path == "/auth":
 		as.doAuth(rw, req)
+	case req.URL.Path == "/auth_repo":
+		as.doAuthRepo(rw, req)
+	case req.URL.Path == "/auth_rel":
+		as.doAuthRel(rw, req)
 	case req.URL.Path == "/google_auth" && as.ga != nil:
 		as.ga.DoGoogleAuth(rw, req)
 	case req.URL.Path == "/github_auth" && as.gha != nil:
@@ -330,7 +352,14 @@ func (as *AuthServer) doIndex(rw http.ResponseWriter, req *http.Request) {
 }
 
 func (as *AuthServer) doAuth(rw http.ResponseWriter, req *http.Request) {
+	var authFlag bool = true
+	if _, _, ok := req.BasicAuth(); ok == false {
+		authFlag = false
+	}
+
 	ar, err := as.ParseRequest(req)
+	glog.Infoln("ar is: ", *ar)
+
 	ares := []authzResult{}
 	if err != nil {
 		glog.Warningf("Bad request: %s", err)
@@ -338,7 +367,8 @@ func (as *AuthServer) doAuth(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	glog.V(2).Infof("Auth request: %+v", ar)
-	{
+
+	if authFlag == true {
 		authnResult, err := as.Authenticate(ar)
 		if err != nil {
 			http.Error(rw, fmt.Sprintf("Authentication failed (%s)", err), http.StatusInternalServerError)
@@ -349,7 +379,8 @@ func (as *AuthServer) doAuth(rw http.ResponseWriter, req *http.Request) {
 			http.Error(rw, "Auth failed.", http.StatusUnauthorized)
 			return
 		}
-	}
+	} //if authFlag is false ,the request is not need authenticate
+
 	if len(ar.Scopes) > 0 {
 		ares, err = as.Authorize(ar)
 		if err != nil {
@@ -359,17 +390,25 @@ func (as *AuthServer) doAuth(rw http.ResponseWriter, req *http.Request) {
 	} else {
 		// Authentication-only request ("docker login"), pass through.
 	}
-	token, err := as.CreateToken(ar, ares)
-	if err != nil {
-		msg := fmt.Sprintf("Failed to generate token %s", err)
-		http.Error(rw, msg, http.StatusInternalServerError)
-		glog.Errorf("%s: %s", ar, msg)
-		return
+
+	if authFlag == true {
+		token, err := as.CreateToken(ar, ares)
+		if err != nil {
+			msg := fmt.Sprintf("Failed to generate token %s", err)
+			http.Error(rw, msg, http.StatusInternalServerError)
+			glog.Errorf("%s: %s", ar, msg)
+			return
+		}
+		result, _ := json.Marshal(&map[string]string{"token": token})
+		glog.V(3).Infof("%s", result)
+		rw.Header().Set("Content-Type", "application/json")
+		rw.Write(result)
+	} else {
+		resultOK, _ := json.Marshal(&map[string]string{"status": "ok"})
+		glog.V(3).Infof("%s", resultOK)
+		rw.Header().Set("Content-Type", "application/json")
+		rw.Write(resultOK) //write a ok
 	}
-	result, _ := json.Marshal(&map[string]string{"token": token})
-	glog.V(3).Infof("%s", result)
-	rw.Header().Set("Content-Type", "application/json")
-	rw.Write(result)
 }
 
 func (as *AuthServer) Stop() {
@@ -380,6 +419,220 @@ func (as *AuthServer) Stop() {
 		az.Stop()
 	}
 	glog.Infof("Server stopped")
+}
+
+func (as *AuthServer) doAuthRepo(rw http.ResponseWriter, req *http.Request) {
+	switch req.Method {
+	case "POST":
+		//add a repo info
+		as.doAuthRepoPost(rw, req)
+	case "DELETE":
+		//delete a repo info
+		as.doAuthRepoDelete(rw, req)
+	default:
+		//default return method not support
+		as.doAuthDefault(rw, req)
+	}
+}
+func (as *AuthServer) doAuthRepoPost(rw http.ResponseWriter, req *http.Request) {
+	reponame := req.FormValue("reponame")
+	property := req.FormValue("property")
+	if len(property) == 0 || len(reponame) == 0 {
+		glog.Errorln("please provide property and reponame")
+		resultTrue, _ := json.Marshal(&map[string]string{"info": "reponame or property is null"})
+		glog.V(3).Infof("%s", resultTrue)
+		rw.Header().Set("Content-Type", "application/json")
+		rw.WriteHeader(http.StatusNotFound)
+		rw.Write(resultTrue)
+		return
+	}
+
+	mc, err := authz.NewACLMysql(as.config.ACLMysql)
+	if err != nil {
+		glog.Errorln(err)
+	}
+	result, err := mc.InsertRepo(reponame, property)
+	if err != nil {
+		glog.Errorln(err)
+		resultTrue, _ := json.Marshal(&map[string]string{"info": "insert mysql error"})
+		glog.V(3).Infof("%s", resultTrue)
+		rw.Header().Set("Content-Type", "application/json")
+		rw.WriteHeader(http.StatusNotFound)
+		rw.Write(resultTrue)
+		return
+	}
+	resultTrue, _ := json.Marshal(&map[string]bool{"status": result})
+	glog.V(3).Infof("%s", resultTrue)
+	rw.Header().Set("Content-Type", "application/json")
+	rw.Write(resultTrue)
+}
+
+func (as *AuthServer) doAuthRepoDelete(rw http.ResponseWriter, req *http.Request) {
+
+}
+
+func (as *AuthServer) doAuthDefault(rw http.ResponseWriter, req *http.Request) {
+	resultTrue, _ := json.Marshal(&map[string]string{"info": "Methods not support error"})
+	glog.V(3).Infof("%s", resultTrue)
+	rw.Header().Set("Content-Type", "application/json")
+	rw.WriteHeader(http.StatusNotFound)
+	rw.Write(resultTrue)
+
+}
+
+func (as *AuthServer) doAuthRel(rw http.ResponseWriter, req *http.Request) {
+	switch req.Method {
+	case "GET":
+		//get rels of projects and it's repo
+		as.doAuthRelGet(rw, req)
+	case "POST":
+		//add a rel info
+		as.doAuthRelPost(rw, req)
+	case "PUT":
+		//update a rel
+	case "DELETE":
+		//delete a rel info
+		as.doAuthRelDelete(rw, req)
+	default:
+		//default return method not support
+		as.doAuthDefault(rw, req)
+	}
+}
+
+func (as *AuthServer) doAuthRelGet(rw http.ResponseWriter, req *http.Request) {
+	project := req.FormValue("project")
+	if len(project) == 0 {
+		glog.Errorln("please provide project")
+		resultTrue, _ := json.Marshal(&map[string]string{"info": "project is null"})
+		glog.V(3).Infof("%s", resultTrue)
+		rw.Header().Set("Content-Type", "application/json")
+		rw.WriteHeader(http.StatusNotFound)
+		rw.Write(resultTrue)
+		return
+	}
+
+	mc, err := authz.NewACLMysql(as.config.ACLMysql)
+	if err != nil {
+		glog.Errorln(err)
+	}
+	result, err := mc.GetRepos(project)
+
+	if err != nil {
+		glog.Errorln(err)
+		resultTrue, _ := json.Marshal(&map[string]string{"info": "func get repos mysql error"})
+		glog.V(3).Infof("%s", resultTrue)
+		rw.Header().Set("Content-Type", "application/json")
+		rw.WriteHeader(http.StatusNotFound)
+		rw.Write(resultTrue)
+		return
+	}
+	resultTrue, _ := json.Marshal(&map[string][]string{"repos": result})
+	glog.V(3).Infof("%s", resultTrue)
+	rw.Header().Set("Content-Type", "application/json")
+	rw.Write(resultTrue)
+
+}
+
+func (as *AuthServer) doAuthRelPost(rw http.ResponseWriter, req *http.Request) {
+	project := req.FormValue("project")
+	reponame := req.FormValue("reponame")
+	if len(project) == 0 || len(reponame) == 0 {
+		glog.Errorln("please provide project and reponame")
+		resultTrue, _ := json.Marshal(&map[string]string{"info": "project or reponame is null"})
+		glog.V(3).Infof("%s", resultTrue)
+		rw.Header().Set("Content-Type", "application/json")
+		rw.WriteHeader(http.StatusNotFound)
+		rw.Write(resultTrue)
+		return
+	}
+
+	mc, err := authz.NewACLMysql(as.config.ACLMysql)
+	if err != nil {
+		glog.Errorln(err)
+	}
+	result, err := mc.InsertRel(project, reponame, "exist")
+
+	if err != nil {
+		glog.Errorln(err)
+		resultTrue, _ := json.Marshal(&map[string]string{"info": "insert mysql error"})
+		glog.V(3).Infof("%s", resultTrue)
+		rw.Header().Set("Content-Type", "application/json")
+		rw.WriteHeader(http.StatusNotFound)
+		rw.Write(resultTrue)
+		return
+	}
+	resultTrue, _ := json.Marshal(&map[string]bool{"status": result})
+	glog.V(3).Infof("%s", resultTrue)
+	rw.Header().Set("Content-Type", "application/json")
+	rw.Write(resultTrue)
+}
+
+//func (as *AuthServer) doAuthRelPut(rw http.ResponseWriter, req *http.Request) {
+//	project := req.FormValue("project")
+//	reponame := req.FormValue("reponame")
+//	if len(project) == 0 || len(reponame) == 0 {
+//		glog.Errorln("please provide project and reponame")
+//		resultTrue, _ := json.Marshal(&map[string]string{"info": "project or reponame is null"})
+//		glog.V(3).Infof("%s", resultTrue)
+//		rw.Header().Set("Content-Type", "application/json")
+//		rw.WriteHeader(http.StatusNotFound)
+//		rw.Write(resultTrue)
+//		return
+//	}
+//
+//	mc, err := authz.NewACLMysql(as.config.ACLMysql)
+//	if err != nil {
+//		glog.Errorln(err)
+//	}
+//
+//	if err != nil {
+//		glog.Errorln(err)
+//		resultTrue, _ := json.Marshal(&map[string]string{"info": "insert mysql error"})
+//		glog.V(3).Infof("%s", resultTrue)
+//		rw.Header().Set("Content-Type", "application/json")
+//		rw.WriteHeader(http.StatusNotFound)
+//		rw.Write(resultTrue)
+//	}
+//	resultTrue, _ := json.Marshal(&map[string]bool{"status": result})
+//	glog.V(3).Infof("%s", resultTrue)
+//	rw.Header().Set("Content-Type", "application/json")
+//	rw.Write(resultTrue)
+//
+//}
+
+func (as *AuthServer) doAuthRelDelete(rw http.ResponseWriter, req *http.Request) {
+	project := req.FormValue("project")
+	reponame := req.FormValue("reponame")
+	if len(project) == 0 || len(reponame) == 0 {
+		glog.Errorln("please provide project and reponame")
+		resultTrue, _ := json.Marshal(&map[string]string{"info": "project or reponame is null"})
+		glog.V(3).Infof("%s", resultTrue)
+		rw.Header().Set("Content-Type", "application/json")
+		rw.WriteHeader(http.StatusNotFound)
+		rw.Write(resultTrue)
+		return
+	}
+
+	mc, err := authz.NewACLMysql(as.config.ACLMysql)
+	if err != nil {
+		glog.Errorln(err)
+	}
+
+	result, err := mc.UpdateRel(project, reponame, "non-exist")
+	if err != nil {
+		glog.Errorln(err)
+		resultTrue, _ := json.Marshal(&map[string]string{"info": "update mysql error"})
+		glog.V(3).Infof("%s", resultTrue)
+		rw.Header().Set("Content-Type", "application/json")
+		rw.WriteHeader(http.StatusNotFound)
+		rw.Write(resultTrue)
+		return
+	}
+	resultTrue, _ := json.Marshal(&map[string]bool{"status": result})
+	glog.V(3).Infof("%s", resultTrue)
+	rw.Header().Set("Content-Type", "application/json")
+	rw.Write(resultTrue)
+
 }
 
 // Copy-pasted from libtrust where it is private.

@@ -98,6 +98,7 @@ func (aa *aclAuthorizer) Authorize(ai *AuthRequestInfo) ([]string, error) {
 			if len(*e.Actions) == 1 && (*e.Actions)[0] == "*" {
 				return ai.Actions, nil
 			}
+			fmt.Println("acl Authorize *****************************")
 			return StringSetIntersection(ai.Actions, *e.Actions), nil
 		}
 	}
