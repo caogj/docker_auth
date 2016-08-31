@@ -8,18 +8,15 @@ import (
 	"github.com/golang/glog"
 )
 
-const (
-	KEYSTONE_URL = "http://127.0.0.1:35357/v3"
-	ADMIN_TOKEN  = "123456"
-	DOMAIN_ID    = "61534a660b2a431786cd07233d922d9c"
-)
-
 type ACLMysql struct {
 	Config *ACLMysqlConfig
 }
 
 type ACLMysqlConfig struct {
-	Url string `yaml:"url,omitempty"`
+	Url         string `yaml:"url,omitempty"`
+	Kurl        string `yaml:"kurl,omitempty"`
+	Kadmintoken string `yaml:"kadmintoken,omitempty"`
+	Kdomainid   string `yaml:"kdomainid,omitempty"`
 }
 
 func NewACLMysql(config *ACLMysqlConfig) (*ACLMysql, error) {
@@ -78,9 +75,9 @@ func (am *ACLMysql) authorizerRepository(ai *AuthRequestInfo) ([]string, error) 
 		return StringSetIntersection(ai.Actions, ai.Actions), nil
 	}
 	kc, err := authn.NewKeystoneClient(&authn.KeystoneConfig{
-		Url:        KEYSTONE_URL,
-		AdminToken: ADMIN_TOKEN,
-		DomainId:   DOMAIN_ID,
+		Url:        am.Config.Kurl,
+		AdminToken: am.Config.Kadmintoken,
+		DomainId:   am.Config.Kdomainid,
 	})
 	if err != nil {
 		glog.Errorln("NewKeystoneclient err :", err)
