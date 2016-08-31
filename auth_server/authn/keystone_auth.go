@@ -3,16 +3,10 @@ package authn
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"github.com/golang/glog"
 	"io/ioutil"
 	"net/http"
 )
-
-//const (
-//	KEYSTONE_URL       string = "http://127.0.0.1:35357/v3"
-//	KEYSTONE_DOMAIN_ID string = "291d84999cd145cb9dc2eed438021337"
-//)
 
 type KeystoneClient struct {
 	HttpClient *http.Client
@@ -137,12 +131,12 @@ func NewKeystoneClient(config *KeystoneConfig) (*KeystoneClient, error) {
 }
 
 //to keystone api GET /v3/users
-func (kc *KeystoneClient) ListUsers(username string) (r ListUsersResp, err error) {
-	var respArry ListUsersResp
+func (kc *KeystoneClient) ListUsers(username string) (r *ListUsersResp, err error) {
+	var respArry *ListUsersResp
 	reqURl := kc.Config.Url + "/users?name=" + username
 	req, err := http.NewRequest("GET", reqURl, nil)
 	if err != nil {
-		fmt.Println(err)
+		return nil, err
 	}
 	req.Header.Set("X-Auth-Token", kc.Config.AdminToken)
 	req.Header.Set("Content-Type", "application/json")
@@ -150,17 +144,17 @@ func (kc *KeystoneClient) ListUsers(username string) (r ListUsersResp, err error
 	resp, err := kc.HttpClient.Do(req)
 
 	if err != nil {
-		fmt.Println("ListUsers HttpClient.Do error: ", err)
+		return nil, err
 	}
 
 	respBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		glog.Errorln(err)
+		return nil, err
 	}
 
-	err = json.Unmarshal(respBody, &respArry)
+	err = json.Unmarshal(respBody, respArry)
 	if err != nil {
-		fmt.Println("ListUsers Marshal error :", err)
+		return nil, err
 	}
 	return respArry, nil
 }
@@ -192,11 +186,11 @@ func (kc *KeystoneClient) CheckUser(username, password string) (bool, error) {
 
 	cpio, err := json.Marshal(cp)
 	if err != nil {
-		glog.Errorln(err)
+		return false, err
 	}
 	req, err := http.NewRequest("POST", reqURl, bytes.NewBuffer(cpio))
 	if err != nil {
-		fmt.Println(err)
+		return false, err
 	}
 	req.Header.Set("X-Auth-Token", kc.Config.AdminToken)
 	req.Header.Set("Content-Type", "application/json")
@@ -206,51 +200,51 @@ func (kc *KeystoneClient) CheckUser(username, password string) (bool, error) {
 	glog.Infoln("respone is :", *resp)
 
 	if err != nil {
-		fmt.Println("ListUsers HttpClient.Do error: ", err)
+		return false, err
 	}
 
 	respBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		glog.Errorln(err)
+		return false, err
 	}
 
 	err = json.Unmarshal(respBody, &respArry)
 	if err != nil {
-		glog.Errorln("ListUsers Marshal error :", err)
+		return false, err
 	}
 	s := resp.Header.Get("X-Subject-Token")
 	glog.Errorln("X-Subject-Token is: ", s)
-	if len(s) != 0 {
+	if s != "" {
 		return true, nil
 	}
 	return false, nil
 }
 
 //to keystone api GET /v3/projects
-func (kc *KeystoneClient) ShowProject(projectID string) (ShowProjectResp, error) {
-	var respArry ShowProjectResp
+func (kc *KeystoneClient) ShowProject(projectID string) (*ShowProjectResp, error) {
+	var respArry *ShowProjectResp
 	reqURL := kc.Config.Url + "/projects/" + projectID
 	req, err := http.NewRequest("GET", reqURL, nil)
 	if err != nil {
-		glog.Errorln("show project request  err :", err)
+		return nil, err
 	}
 	req.Header.Set("X-Auth-Token", kc.Config.AdminToken)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := kc.HttpClient.Do(req)
 	if err != nil {
-		glog.Errorln("show project httpdo  err :", err)
+		return nil, err
 	}
 	glog.Infoln("show project resp is :", *resp)
 
 	respBody, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		glog.Errorln(err)
+		return nil, err
 	}
 
-	err = json.Unmarshal(respBody, &respArry)
+	err = json.Unmarshal(respBody, respArry)
 	if err != nil {
-		glog.Errorln("ShowProject Marshal error :", err)
+		return nil, err
 	}
 	return respArry, nil
 
@@ -260,8 +254,7 @@ func (kc *KeystoneClient) Authenticate(user string, password PasswordString) (bo
 	glog.Infoln("Start KeystoneAuth **********************")
 	result, err := kc.CheckUser(user, password.String())
 	if err != nil || !result {
-		glog.Errorln("Keystone authenticate error: ", err)
-		return result, err
+		return false, err
 	}
 	return result, nil
 }
@@ -273,19 +266,3 @@ func (kc *KeystoneClient) Stop() {
 func (kc *KeystoneClient) Name() string {
 	return "keystone_auth"
 }
-
-//func main() {
-//	kc, _ := NewKeystoneClient(&KeystoneConfig{
-//		Url:        KEYSTONE_URL,
-//		AdminToken: "123456",
-//	})
-//	r, err := kc.ListUsers("admin")
-//	if err != nil {
-//		glog.Errorln("kc.ListUsers error : ", err)
-//	}
-//	fmt.Println("result is :", r)
-//
-//	a, _ := kc.CheckUser("admin", "mmlhsm4")
-//	fmt.Println("check result is :", a)
-//
-//}

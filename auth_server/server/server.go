@@ -437,7 +437,7 @@ func (as *AuthServer) doAuthRepo(rw http.ResponseWriter, req *http.Request) {
 func (as *AuthServer) doAuthRepoPost(rw http.ResponseWriter, req *http.Request) {
 	reponame := req.FormValue("reponame")
 	property := req.FormValue("property")
-	if len(property) == 0 || len(reponame) == 0 {
+	if property == "" || reponame == "" {
 		glog.Errorln("please provide property and reponame")
 		resultTrue, _ := json.Marshal(&map[string]string{"info": "reponame or property is null"})
 		glog.V(3).Infof("%s", resultTrue)
@@ -501,7 +501,7 @@ func (as *AuthServer) doAuthRel(rw http.ResponseWriter, req *http.Request) {
 
 func (as *AuthServer) doAuthRelGet(rw http.ResponseWriter, req *http.Request) {
 	project := req.FormValue("project")
-	if len(project) == 0 {
+	if project == "" {
 		glog.Errorln("please provide project")
 		resultTrue, _ := json.Marshal(&map[string]string{"info": "project is null"})
 		glog.V(3).Infof("%s", resultTrue)
@@ -536,7 +536,7 @@ func (as *AuthServer) doAuthRelGet(rw http.ResponseWriter, req *http.Request) {
 func (as *AuthServer) doAuthRelPost(rw http.ResponseWriter, req *http.Request) {
 	project := req.FormValue("project")
 	reponame := req.FormValue("reponame")
-	if len(project) == 0 || len(reponame) == 0 {
+	if project == "" || reponame == "" {
 		glog.Errorln("please provide project and reponame")
 		resultTrue, _ := json.Marshal(&map[string]string{"info": "project or reponame is null"})
 		glog.V(3).Infof("%s", resultTrue)
@@ -567,43 +567,10 @@ func (as *AuthServer) doAuthRelPost(rw http.ResponseWriter, req *http.Request) {
 	rw.Write(resultTrue)
 }
 
-//func (as *AuthServer) doAuthRelPut(rw http.ResponseWriter, req *http.Request) {
-//	project := req.FormValue("project")
-//	reponame := req.FormValue("reponame")
-//	if len(project) == 0 || len(reponame) == 0 {
-//		glog.Errorln("please provide project and reponame")
-//		resultTrue, _ := json.Marshal(&map[string]string{"info": "project or reponame is null"})
-//		glog.V(3).Infof("%s", resultTrue)
-//		rw.Header().Set("Content-Type", "application/json")
-//		rw.WriteHeader(http.StatusNotFound)
-//		rw.Write(resultTrue)
-//		return
-//	}
-//
-//	mc, err := authz.NewACLMysql(as.config.ACLMysql)
-//	if err != nil {
-//		glog.Errorln(err)
-//	}
-//
-//	if err != nil {
-//		glog.Errorln(err)
-//		resultTrue, _ := json.Marshal(&map[string]string{"info": "insert mysql error"})
-//		glog.V(3).Infof("%s", resultTrue)
-//		rw.Header().Set("Content-Type", "application/json")
-//		rw.WriteHeader(http.StatusNotFound)
-//		rw.Write(resultTrue)
-//	}
-//	resultTrue, _ := json.Marshal(&map[string]bool{"status": result})
-//	glog.V(3).Infof("%s", resultTrue)
-//	rw.Header().Set("Content-Type", "application/json")
-//	rw.Write(resultTrue)
-//
-//}
-
 func (as *AuthServer) doAuthRelDelete(rw http.ResponseWriter, req *http.Request) {
 	project := req.FormValue("project")
 	reponame := req.FormValue("reponame")
-	if len(project) == 0 || len(reponame) == 0 {
+	if project == "" || reponame == "" {
 		glog.Errorln("please provide project and reponame")
 		resultTrue, _ := json.Marshal(&map[string]string{"info": "project or reponame is null"})
 		glog.V(3).Infof("%s", resultTrue)
