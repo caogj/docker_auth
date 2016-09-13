@@ -71,7 +71,7 @@ func (am *ACLMysql) authorizerRepository(ai *AuthRequestInfo) ([]string, error) 
 				return StringSetIntersection(ai.Actions, nil), nil
 			}
 		}
-		glog.Infoln("user action is :", ai.Actions, "it not permit.")
+		glog.Infoln("user action is :", ai.Actions)
 		return StringSetIntersection(ai.Actions, ai.Actions), nil
 	}
 	kc, err := authn.NewKeystoneClient(&authn.KeystoneConfig{
@@ -85,7 +85,7 @@ func (am *ACLMysql) authorizerRepository(ai *AuthRequestInfo) ([]string, error) 
 	}
 	resp, err := kc.ListUsers(ai.Account)
 	if err != nil {
-		glog.Errorln("kc.Getusers err :", err)
+		glog.Errorln("list users err :", err)
 		return nil, err
 	}
 
