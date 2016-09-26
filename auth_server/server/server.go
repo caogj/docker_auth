@@ -60,6 +60,14 @@ func NewAuthServer(c *Config) (*AuthServer, error) {
 		}
 		as.authorizers = append(as.authorizers, mongoAuthorizer)
 	}
+	if c.ACLMysql != nil {
+		mysqlAuthorizer, err := authz.NewACLMysql(c.ACLMysql)
+
+		if err != nil {
+			return nil, err
+		}
+		as.authorizers = append(as.authorizers, mysqlAuthorizer)
+	}
 	if c.Users != nil {
 		as.authenticators = append(as.authenticators, authn.NewStaticUserAuth(c.Users))
 	}
@@ -95,6 +103,13 @@ func NewAuthServer(c *Config) (*AuthServer, error) {
 			return nil, err
 		}
 		as.authenticators = append(as.authenticators, ma)
+	}
+	if c.KeystoneAuth != nil {
+		ka, err := authn.NewKeystoneClient(c.KeystoneAuth)
+		if err != nil {
+			return nil, err
+		}
+		as.authenticators = append(as.authenticators, ka)
 	}
 	return as, nil
 }
@@ -152,6 +167,8 @@ func (as *AuthServer) ParseRequest(req *http.Request) (*authRequest, error) {
 		return nil, fmt.Errorf("unable to parse remote addr %s", ar.RemoteAddr)
 	}
 	user, password, haveBasicAuth := req.BasicAuth()
+	glog.Infoln(user, password, haveBasicAuth, req.Header.Get("Authorization"))
+
 	if haveBasicAuth {
 		ar.User = user
 		ar.Password = authn.PasswordString(password)
@@ -245,6 +262,7 @@ func (as *AuthServer) Authorize(ar *authRequest) ([]authzResult, error) {
 
 // https://github.com/docker/distribution/blob/master/docs/spec/auth/token.md#example
 func (as *AuthServer) CreateToken(ar *authRequest, ares []authzResult) (string, error) {
+	glog.Infoln("func CreateToken :", ares)
 	now := time.Now().Unix()
 	tc := &as.config.Token
 
@@ -307,6 +325,10 @@ func (as *AuthServer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		as.doIndex(rw, req)
 	case req.URL.Path == "/auth":
 		as.doAuth(rw, req)
+	case req.URL.Path == "/auth_repo":
+		as.doAuthRepo(rw, req)
+	case req.URL.Path == "/auth_rel":
+		as.doAuthRel(rw, req)
 	case req.URL.Path == "/google_auth" && as.ga != nil:
 		as.ga.DoGoogleAuth(rw, req)
 	case req.URL.Path == "/github_auth" && as.gha != nil:
@@ -330,7 +352,14 @@ func (as *AuthServer) doIndex(rw http.ResponseWriter, req *http.Request) {
 }
 
 func (as *AuthServer) doAuth(rw http.ResponseWriter, req *http.Request) {
+	var authFlag bool = true
+	if _, _, ok := req.BasicAuth(); ok == false {
+		authFlag = false
+	}
+
 	ar, err := as.ParseRequest(req)
+	glog.Infoln("ar is: ", *ar)
+
 	ares := []authzResult{}
 	if err != nil {
 		glog.Warningf("Bad request: %s", err)
@@ -338,7 +367,8 @@ func (as *AuthServer) doAuth(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 	glog.V(2).Infof("Auth request: %+v", ar)
-	{
+
+	if authFlag == true {
 		authnResult, err := as.Authenticate(ar)
 		if err != nil {
 			http.Error(rw, fmt.Sprintf("Authentication failed (%s)", err), http.StatusInternalServerError)
@@ -349,7 +379,8 @@ func (as *AuthServer) doAuth(rw http.ResponseWriter, req *http.Request) {
 			http.Error(rw, "Auth failed.", http.StatusUnauthorized)
 			return
 		}
-	}
+	} //if authFlag is false ,the request is not need authenticate
+
 	if len(ar.Scopes) > 0 {
 		ares, err = as.Authorize(ar)
 		if err != nil {
@@ -359,17 +390,25 @@ func (as *AuthServer) doAuth(rw http.ResponseWriter, req *http.Request) {
 	} else {
 		// Authentication-only request ("docker login"), pass through.
 	}
-	token, err := as.CreateToken(ar, ares)
-	if err != nil {
-		msg := fmt.Sprintf("Failed to generate token %s", err)
-		http.Error(rw, msg, http.StatusInternalServerError)
-		glog.Errorf("%s: %s", ar, msg)
-		return
+
+	if authFlag == true {
+		token, err := as.CreateToken(ar, ares)
+		if err != nil {
+			msg := fmt.Sprintf("Failed to generate token %s", err)
+			http.Error(rw, msg, http.StatusInternalServerError)
+			glog.Errorf("%s: %s", ar, msg)
+			return
+		}
+		result, _ := json.Marshal(&map[string]string{"token": token})
+		glog.V(3).Infof("%s", result)
+		rw.Header().Set("Content-Type", "application/json")
+		rw.Write(result)
+	} else {
+		resultOK, _ := json.Marshal(&map[string]string{"status": "ok"})
+		glog.V(3).Infof("%s", resultOK)
+		rw.Header().Set("Content-Type", "application/json")
+		rw.Write(resultOK) //write a ok
 	}
-	result, _ := json.Marshal(&map[string]string{"token": token})
-	glog.V(3).Infof("%s", result)
-	rw.Header().Set("Content-Type", "application/json")
-	rw.Write(result)
 }
 
 func (as *AuthServer) Stop() {

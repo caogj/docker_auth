@@ -32,16 +32,18 @@ import (
 )
 
 type Config struct {
-	Server     ServerConfig                   `yaml:"server"`
-	Token      TokenConfig                    `yaml:"token"`
-	Users      map[string]*authn.Requirements `yaml:"users,omitempty"`
-	GoogleAuth *authn.GoogleAuthConfig        `yaml:"google_auth,omitempty"`
-	GitHubAuth *authn.GitHubAuthConfig        `yaml:"github_auth,omitempty"`
-	LDAPAuth   *authn.LDAPAuthConfig          `yaml:"ldap_auth,omitempty"`
-	MongoAuth  *authn.MongoAuthConfig         `yaml:"mongo_auth,omitempty"`
-	ExtAuth    *authn.ExtAuthConfig           `yaml:"ext_auth,omitempty"`
-	ACL        authz.ACL                      `yaml:"acl,omitempty"`
-	ACLMongo   *authz.ACLMongoConfig          `yaml:"acl_mongo,omitempty"`
+	Server       ServerConfig                   `yaml:"server"`
+	Token        TokenConfig                    `yaml:"token"`
+	Users        map[string]*authn.Requirements `yaml:"users,omitempty"`
+	GoogleAuth   *authn.GoogleAuthConfig        `yaml:"google_auth,omitempty"`
+	GitHubAuth   *authn.GitHubAuthConfig        `yaml:"github_auth,omitempty"`
+	LDAPAuth     *authn.LDAPAuthConfig          `yaml:"ldap_auth,omitempty"`
+	MongoAuth    *authn.MongoAuthConfig         `yaml:"mongo_auth,omitempty"`
+	ExtAuth      *authn.ExtAuthConfig           `yaml:"ext_auth,omitempty"`
+	KeystoneAuth *authn.KeystoneConfig          `yaml:"keystone_auth,omitempty"`
+	ACL          authz.ACL                      `yaml:"acl,omitempty"`
+	ACLMongo     *authz.ACLMongoConfig          `yaml:"acl_mongo,omitempty"`
+	ACLMysql     *authz.ACLMysqlConfig          `yaml:"acl_mysql,omitempty"`
 }
 
 type ServerConfig struct {
@@ -75,7 +77,7 @@ func validate(c *Config) error {
 	if c.Token.Expiration <= 0 {
 		return fmt.Errorf("expiration must be positive, got %d", c.Token.Expiration)
 	}
-	if c.Users == nil && c.ExtAuth == nil && c.GoogleAuth == nil && c.GitHubAuth == nil && c.LDAPAuth == nil && c.MongoAuth == nil {
+	if c.Users == nil && c.ExtAuth == nil && c.GoogleAuth == nil && c.GitHubAuth == nil && c.LDAPAuth == nil && c.MongoAuth == nil && c.KeystoneAuth == nil {
 		return errors.New("no auth methods are configured, this is probably a mistake. Use an empty user map if you really want to deny everyone.")
 	}
 	if c.MongoAuth != nil {
@@ -122,7 +124,7 @@ func validate(c *Config) error {
 			return fmt.Errorf("bad ext_auth config: %s", err)
 		}
 	}
-	if c.ACL == nil && c.ACLMongo == nil {
+	if c.ACL == nil && c.ACLMongo == nil && c.ACLMysql == nil {
 		return errors.New("ACL is empty, this is probably a mistake. Use an empty list if you really want to deny all actions")
 	}
 	if c.ACLMongo != nil {
@@ -159,6 +161,7 @@ func LoadConfig(fileName string) (*Config, error) {
 	if err = yaml.Unmarshal(contents, c); err != nil {
 		return nil, fmt.Errorf("could not parse config: %s", err)
 	}
+	fmt.Printf("keystoneauth config is :%s,\naclmysql config is :%s", c.KeystoneAuth, c.ACLMysql)
 	if err = validate(c); err != nil {
 		return nil, fmt.Errorf("invalid config: %s", err)
 	}
